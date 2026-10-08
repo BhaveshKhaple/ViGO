@@ -1,0 +1,894 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>ViGO — Command Center</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🛡️</text></svg>"/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+<style>
+/* ─── RESET & TOKENS ─────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg:          #07090f;
+  --surface:     #0d1120;
+  --card:        #111827;
+  --border:      rgba(148,163,184,0.08);
+  --border-hi:   rgba(148,163,184,0.14);
+
+  --normal:      #10b981;
+  --normal-dim:  rgba(16,185,129,0.12);
+  --normal-glow: rgba(16,185,129,0.35);
+  --warning:     #f59e0b;
+  --warning-dim: rgba(245,158,11,0.12);
+  --danger:      #ef4444;
+  --danger-dim:  rgba(239,68,68,0.12);
+  --danger-glow: rgba(239,68,68,0.4);
+
+  --text:        #f1f5f9;
+  --text-muted:  #64748b;
+  --text-dim:    #94a3b8;
+  --mono:        "JetBrains Mono","Fira Code","Cascadia Code","Consolas",monospace;
+  --font:        -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
+}
+
+html, body {
+  height: 100%; overflow: hidden;
+  font-family: var(--font);
+  background: var(--bg); color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ─── LOUD-SOUND BORDER FLASH ─────────────────────────────────────────────── */
+body.alert-flash { animation: borderFlash 2.2s ease-out forwards; }
+@keyframes borderFlash {
+  0%   { box-shadow: inset 0 0 0 0   rgba(239,68,68,0); }
+  12%  { box-shadow: inset 0 0 0 16px rgba(239,68,68,0.9); }
+  55%  { box-shadow: inset 0 0 0 16px rgba(239,68,68,0.5); }
+  100% { box-shadow: inset 0 0 0 0   rgba(239,68,68,0); }
+}
+
+/* ─── COMMAND BAR ─────────────────────────────────────────────────────────── */
+#banner {
+  position: fixed; top: 0; left: 0; right: 0; height: 64px;
+  display: grid; grid-template-columns: 220px 1fr 220px;
+  align-items: center; padding: 0 20px; gap: 12px;
+  z-index: 1000;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+/* Animated accent line at bottom of banner */
+#banner::after {
+  content: '';
+  position: absolute; bottom: -1px; left: 0; right: 0; height: 2px;
+  background: linear-gradient(90deg, transparent 0%, var(--normal) 30%, var(--normal) 70%, transparent 100%);
+  transition: background 0.4s ease;
+}
+#banner.warning::after {
+  background: linear-gradient(90deg, transparent 0%, var(--warning) 30%, var(--warning) 70%, transparent 100%);
+}
+#banner.sos::after {
+  background: linear-gradient(90deg, transparent 0%, var(--danger) 30%, var(--danger) 70%, transparent 100%);
+  animation: dangerLine 0.7s linear infinite alternate;
+}
+@keyframes dangerLine { to { opacity: 0.35; } }
+
+/* Brand */
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand-shield { width: 30px; height: 30px; flex-shrink: 0; }
+.brand-text { display: flex; flex-direction: column; line-height: 1.15; }
+.brand-name {
+  font-size: 15px; font-weight: 800; letter-spacing: 0.1em;
+  color: var(--text); text-transform: uppercase;
+}
+.brand-sub {
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.18em;
+  color: var(--text-muted); font-weight: 500;
+}
+
+/* Status badge — center */
+.banner-center { display: flex; align-items: center; justify-content: center; }
+#banner-text {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 7px 22px; border-radius: 100px;
+  font-size: 13px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+  background: var(--normal-dim); color: var(--normal);
+  border: 1px solid rgba(16,185,129,0.22);
+  transition: all 0.35s cubic-bezier(0.4,0,0.2,1);
+  white-space: nowrap;
+}
+#banner.warning #banner-text {
+  background: var(--warning-dim); color: var(--warning);
+  border-color: rgba(245,158,11,0.25);
+}
+#banner.sos #banner-text {
+  background: rgba(239,68,68,0.18); color: #fff;
+  border-color: rgba(239,68,68,0.45);
+  font-size: 15px; padding: 8px 28px;
+  animation: sosBadge 0.85s ease-in-out infinite;
+  box-shadow: 0 0 28px var(--danger-glow);
+}
+@keyframes sosBadge {
+  0%,100% { transform: scale(1);    box-shadow: 0 0 24px var(--danger-glow); }
+  50%      { transform: scale(1.04); box-shadow: 0 0 44px var(--danger-glow); }
+}
+
+/* Right side of banner */
+.banner-right {
+  display: flex; align-items: center; justify-content: flex-end; gap: 14px;
+}
+#live-clock {
+  font-family: var(--mono); font-size: 13px; color: var(--text-muted);
+  letter-spacing: 0.05em; font-variant-numeric: tabular-nums;
+}
+#reset-btn {
+  display: none; align-items: center; gap: 6px;
+  padding: 7px 16px; font-size: 11px; font-weight: 700;
+  letter-spacing: 0.1em; text-transform: uppercase;
+  background: rgba(239,68,68,0.14); color: var(--danger);
+  border: 1px solid rgba(239,68,68,0.4); border-radius: 6px;
+  cursor: pointer; transition: all 0.2s ease;
+}
+#reset-btn:hover { background: rgba(239,68,68,0.26); border-color: rgba(239,68,68,0.65); }
+#banner.sos #reset-btn { display: inline-flex; }
+
+/* ─── MAIN GRID ───────────────────────────────────────────────────────────── */
+#main-grid {
+  position: fixed; top: 64px; left: 0; right: 0; bottom: 0;
+  display: grid; grid-template-columns: 62% 38%;
+}
+
+/* ─── MAP ─────────────────────────────────────────────────────────────────── */
+#map-wrap { position: relative; overflow: hidden; }
+#map { width: 100%; height: 100%; background: #0a0d14; }
+
+/* Red vignette when SOS active (uses :has — Chrome 105+) */
+#map-wrap::after {
+  content: ''; position: absolute; inset: 0; pointer-events: none; z-index: 400;
+  box-shadow: inset 0 0 0 0 rgba(239,68,68,0);
+  transition: box-shadow 0.5s ease;
+}
+body:has(#banner.sos) #map-wrap::after {
+  box-shadow: inset 0 0 60px 12px rgba(239,68,68,0.22);
+  border: 2px solid rgba(239,68,68,0.28);
+}
+
+/* Floating device overlay — bottom-left of map */
+#map-overlay {
+  position: absolute; bottom: 24px; left: 16px; z-index: 500;
+  background: rgba(7,9,15,0.84);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid var(--border-hi);
+  border-radius: 12px; padding: 12px 14px; min-width: 210px;
+}
+.mo-top {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 10px;
+}
+.mo-did {
+  font-family: var(--mono); font-size: 13px; font-weight: 700;
+  color: var(--text); letter-spacing: 0.04em;
+}
+.mo-state-dot {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--normal); box-shadow: 0 0 8px var(--normal-glow);
+  transition: background 0.3s, box-shadow 0.3s;
+  animation: breathe 2.5s ease-in-out infinite;
+}
+@keyframes breathe {
+  0%,100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.55; transform: scale(0.8); }
+}
+.mo-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 5px 0; border-top: 1px solid var(--border);
+}
+.mo-lbl {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-muted);
+}
+.mo-val { font-family: var(--mono); font-size: 10px; color: var(--text-dim); text-align: right; }
+
+/* LIVE badge — top-right of map */
+#map-live-badge {
+  position: absolute; top: 14px; right: 14px; z-index: 500;
+  display: flex; align-items: center; gap: 6px;
+  background: rgba(7,9,15,0.8); backdrop-filter: blur(6px);
+  border: 1px solid rgba(16,185,129,0.28); border-radius: 100px;
+  padding: 5px 13px; font-size: 10px; font-weight: 800;
+  color: var(--normal); letter-spacing: 0.18em;
+}
+.live-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--normal); box-shadow: 0 0 6px var(--normal-glow);
+  animation: breathe 1.6s ease-in-out infinite;
+}
+
+/* ─── RIGHT PANEL ─────────────────────────────────────────────────────────── */
+#right-pane {
+  display: flex; flex-direction: column; overflow: hidden;
+  background: var(--bg);
+  border-left: 1px solid var(--border);
+  transition: border-left-color 0.4s ease;
+}
+body:has(#banner.sos) #right-pane { border-left-color: rgba(239,68,68,0.22); }
+
+/* ─── METRICS STRIP ───────────────────────────────────────────────────────── */
+#metrics-strip {
+  display: grid; grid-template-columns: 1fr 1fr 1fr;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+}
+.metric-chip {
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 5px;
+  padding: 12px 8px; text-align: center;
+  border-right: 1px solid var(--border); background: var(--surface);
+}
+.metric-chip:last-child { border-right: none; }
+.mc-label {
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.12em;
+  color: var(--text-muted); font-weight: 600;
+}
+.mc-val {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  font-size: 13px; font-weight: 600; color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+/* Battery bar lives inside mc-val via s-batt-pct + battery-bar */
+.battery-bar {
+  width: 52px; height: 4px;
+  background: rgba(255,255,255,0.07); border-radius: 2px; overflow: hidden;
+}
+.battery-fill {
+  height: 100%; border-radius: 2px;
+  transition: width 0.6s ease, background-color 0.3s ease;
+}
+.batt-high { background: var(--normal); }
+.batt-mid  { background: var(--warning); }
+.batt-low  { background: var(--danger); box-shadow: 0 0 6px rgba(239,68,68,0.6); }
+
+/* ─── STATUS CARD ─────────────────────────────────────────────────────────── */
+#status-card {
+  margin: 14px 14px 0;
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 10px; padding: 14px 16px; flex-shrink: 0;
+  transition: border-color 0.4s ease;
+}
+body:has(#banner.sos) #status-card { border-color: rgba(239,68,68,0.2); }
+
+.card-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 12px;
+}
+.card-title {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.14em;
+  color: var(--text-muted); font-weight: 700;
+}
+.card-badge {
+  font-size: 9px; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase;
+  padding: 3px 9px; border-radius: 100px;
+  background: var(--normal-dim); color: var(--normal);
+  border: 1px solid rgba(16,185,129,0.2);
+}
+
+.status-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 9px 0; border-top: 1px solid var(--border);
+}
+.status-row .label {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; color: var(--text-muted); flex-shrink: 0;
+}
+.row-icon { font-size: 12px; opacity: 0.65; }
+.status-row .value {
+  font-size: 12px; color: var(--text); font-weight: 500;
+  text-align: right; max-width: 58%;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.mono { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.01em; }
+
+/* ─── EVENT FEED ──────────────────────────────────────────────────────────── */
+#feed-wrap {
+  flex: 1; overflow: hidden; display: flex; flex-direction: column;
+  margin: 12px 14px 14px; min-height: 0;
+}
+.feed-header {
+  display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px;
+}
+.feed-count {
+  font-size: 10px; color: var(--text-muted); font-variant-numeric: tabular-nums;
+}
+
+#event-feed {
+  flex: 1; overflow-y: auto; min-height: 0;
+  display: flex; flex-direction: column; gap: 2px;
+}
+#event-feed::-webkit-scrollbar { width: 3px; }
+#event-feed::-webkit-scrollbar-track { background: transparent; }
+#event-feed::-webkit-scrollbar-thumb { background: var(--border-hi); border-radius: 2px; }
+
+/* Event rows — JS creates: .event-time, .event-icon, .event-text (in that order) */
+/* We reorder visually with flex order: icon | text | time */
+.event-row {
+  display: flex; align-items: center; gap: 9px;
+  padding: 8px 10px; border-radius: 8px;
+  border-left: 2px solid transparent;
+  transition: background 0.15s ease;
+  flex-shrink: 0;
+}
+.event-row:hover { background: rgba(255,255,255,0.03); }
+
+.event-row.sos {
+  background: rgba(239,68,68,0.07);
+  border-left-color: var(--danger);
+}
+.event-row.warning {
+  background: rgba(245,158,11,0.07);
+  border-left-color: var(--warning);
+}
+
+/* Reorder visually */
+.event-icon { order: 1; font-size: 15px; flex-shrink: 0; line-height: 1; }
+.event-text { order: 2; flex: 1; font-size: 11.5px; color: var(--text); line-height: 1.45; }
+.event-time {
+  order: 3; flex-shrink: 0;
+  font-size: 10px; color: var(--text-muted);
+  font-family: var(--mono); font-variant-numeric: tabular-nums;
+  min-width: 56px; text-align: right;
+}
+
+/* ─── CONNECTION INDICATOR ────────────────────────────────────────────────── */
+#conn-indicator {
+  position: fixed; bottom: 14px; left: 14px; z-index: 2000;
+  display: flex; align-items: center; gap: 6px;
+  background: rgba(7,9,15,0.9); backdrop-filter: blur(8px);
+  border: 1px solid var(--border-hi); border-radius: 100px;
+  padding: 5px 12px; font-size: 10px; color: var(--text-muted);
+  letter-spacing: 0.04em;
+}
+#conn-indicator .dot { font-size: 7px; transition: color 0.3s; }
+#conn-indicator.connected .dot    { color: var(--normal); }
+#conn-indicator.reconnecting .dot { color: var(--warning); animation: blink 1s ease-in-out infinite; }
+@keyframes blink { 50% { opacity: 0.25; } }
+
+/* ─── LEAFLET DARK OVERRIDES ──────────────────────────────────────────────── */
+.leaflet-container { background: #0a0d14; }
+.leaflet-control-attribution {
+  background: rgba(7,9,15,0.75) !important;
+  color: #374151 !important; font-size: 10px !important;
+}
+.leaflet-control-attribution a { color: #4b5563 !important; }
+.leaflet-control-zoom a {
+  background: rgba(13,17,32,0.92) !important;
+  color: var(--text-dim) !important;
+  border-color: var(--border-hi) !important;
+}
+.leaflet-control-zoom a:hover { background: rgba(30,40,60,0.95) !important; }
+</style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════════════════════════════════════ -->
+<!--  COMMAND BAR                                                              -->
+<!-- ══════════════════════════════════════════════════════════════════════════ -->
+<div id="banner">
+
+  <!-- Brand left -->
+  <div class="brand">
+    <svg class="brand-shield" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <path d="M16 2.5L4.5 7.5V15.5C4.5 22.4 9.7 28.8 16 30C22.3 28.8 27.5 22.4 27.5 15.5V7.5L16 2.5Z"
+            fill="rgba(16,185,129,0.1)" stroke="#10b981" stroke-width="1.4" stroke-linejoin="round"/>
+      <path d="M11.5 16.5L14.8 19.8L21 13.5"
+            stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <div class="brand-text">
+      <span class="brand-name">ViGO</span>
+      <span class="brand-sub">Command Center</span>
+    </div>
+  </div>
+
+  <!-- Status badge — ID is exactly what JS sets .className on -->
+  <div class="banner-center">
+    <div id="banner-text">● NORMAL — —</div>
+  </div>
+
+  <!-- Right: clock + reset -->
+  <div class="banner-right">
+    <div id="live-clock">—</div>
+    <button id="reset-btn">✕&nbsp;&nbsp;RESET</button>
+  </div>
+
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════════ -->
+<!--  MAIN GRID                                                                -->
+<!-- ══════════════════════════════════════════════════════════════════════════ -->
+<div id="main-grid">
+
+  <!-- MAP COLUMN -->
+  <div id="map-wrap">
+    <div id="map"></div>
+
+    <!-- Floating device info panel -->
+    <div id="map-overlay">
+      <div class="mo-top">
+        <span class="mo-did" id="mo-did">—</span>
+        <span class="mo-state-dot" id="mo-dot"></span>
+      </div>
+      <div class="mo-row">
+        <span class="mo-lbl">Lat / Lng</span>
+        <span class="mo-val mono" id="mo-coords">—</span>
+      </div>
+      <div class="mo-row">
+        <span class="mo-lbl">Speed</span>
+        <span class="mo-val" id="mo-speed">—</span>
+      </div>
+      <div class="mo-row">
+        <span class="mo-lbl">Network</span>
+        <span class="mo-val" id="mo-net">—</span>
+      </div>
+    </div>
+
+    <!-- Live badge -->
+    <div id="map-live-badge">
+      <span class="live-dot"></span>LIVE
+    </div>
+  </div>
+
+  <!-- RIGHT PANEL -->
+  <div id="right-pane">
+
+    <!-- Quick metrics strip -->
+    <div id="metrics-strip">
+      <div class="metric-chip">
+        <span class="mc-label">Battery</span>
+        <span class="mc-val">
+          <span id="s-batt-pct">—</span>
+          <span class="battery-bar"><span id="s-batt-fill" class="battery-fill" style="width:0%"></span></span>
+        </span>
+      </div>
+      <div class="metric-chip">
+        <span class="mc-label">Network</span>
+        <span class="mc-val" id="s-network">—</span>
+      </div>
+      <div class="metric-chip">
+        <span class="mc-label">Last Ping</span>
+        <span class="mc-val" id="s-last-seen">—</span>
+      </div>
+    </div>
+
+    <!-- Device status card -->
+    <div id="status-card">
+      <div class="card-header">
+        <span class="card-title">Device Info</span>
+        <span class="card-badge">ACTIVE</span>
+      </div>
+      <div class="status-row">
+        <span class="label"><span class="row-icon">🔌</span>Device ID</span>
+        <span class="value mono" id="s-device">—</span>
+      </div>
+      <div class="status-row">
+        <span class="label"><span class="row-icon">📍</span>Coordinates</span>
+        <span class="value mono" id="s-coords">—</span>
+      </div>
+      <div class="status-row">
+        <span class="label"><span class="row-icon">🚀</span>Speed</span>
+        <span class="value" id="s-speed">—</span>
+      </div>
+    </div>
+
+    <!-- Event feed -->
+    <div id="feed-wrap">
+      <div class="feed-header">
+        <span class="card-title">Event Log</span>
+        <span class="feed-count" id="feed-count">0 events</span>
+      </div>
+      <div id="event-feed"></div>
+    </div>
+
+  </div><!-- /right-pane -->
+</div><!-- /main-grid -->
+
+<!-- Connection pill -->
+<div id="conn-indicator" class="reconnecting">
+  <span class="dot">●</span>
+  <span id="conn-text">connecting...</span>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════════ -->
+<!--  LEAFLET                                                                  -->
+<!-- ══════════════════════════════════════════════════════════════════════════ -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+<!-- ══════════════════════════════════════════════════════════════════════════ -->
+<!--  CORE DASHBOARD LOGIC — UNCHANGED FROM ORIGINAL                          -->
+<!-- ══════════════════════════════════════════════════════════════════════════ -->
+<script>
+/* =========================================================================
+ * ViGO Dashboard - single-file demo
+ * ========================================================================= */
+
+const DEFAULT_CENTER = [18.5204, 73.8567];  // Pune
+const TRAIL_MAX = 20;
+const FEED_MAX = 50;
+const WARNING_DISPLAY_MS = 10000;
+
+// --- State ---
+const state = {
+  device: null,
+  lastTelemetry: null,
+  sosLatched: false,
+  lastSosTrigger: null,
+  warningUntil: 0,
+  lastWarningType: null,
+  trail: [],       // [[lat,lng], ...]
+  sosMarkers: [],
+  lastSeenMs: null,
+};
+
+// --- Leaflet map ---
+const map = L.map('map', { zoomControl: true, attributionControl: true }).setView(DEFAULT_CENTER, 15);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 19,
+  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+}).addTo(map);
+
+const deviceMarker = L.marker(DEFAULT_CENTER).addTo(map);
+const trailLine = L.polyline([], { color: '#ef4444', weight: 3, opacity: 0.6 }).addTo(map);
+
+// --- Element refs ---
+const banner = document.getElementById('banner');
+const bannerText = document.getElementById('banner-text');
+const resetBtn = document.getElementById('reset-btn');
+const sDevice = document.getElementById('s-device');
+const sBattPct = document.getElementById('s-batt-pct');
+const sBattFill = document.getElementById('s-batt-fill');
+const sLastSeen = document.getElementById('s-last-seen');
+const sCoords = document.getElementById('s-coords');
+const sSpeed = document.getElementById('s-speed');
+const sNetwork = document.getElementById('s-network');
+const feedEl = document.getElementById('event-feed');
+const connInd = document.getElementById('conn-indicator');
+const connText = document.getElementById('conn-text');
+
+// --- Helpers ---
+function fmtTime(iso) {
+  if (!iso) return '—';
+  try {
+    const d = new Date(iso);
+    return d.toLocaleTimeString('en-GB', { hour12: false });
+  } catch (e) { return '—'; }
+}
+function fmtRel(ms) {
+  if (!ms) return '—';
+  const diff = Math.max(0, Math.floor((Date.now() - ms) / 1000));
+  if (diff < 60) return diff + 's ago';
+  if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+  return Math.floor(diff / 3600) + 'h ago';
+}
+function parseServerMs(iso) {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  return isNaN(t) ? null : t;
+}
+
+// --- Status card updates ---
+function updateStatusCard() {
+  const t = state.lastTelemetry;
+  const d = state.device;
+  const id = (t && t.device_id) || (d && d.device_id) || '—';
+  sDevice.textContent = id;
+
+  const batt = (t && t.battery != null) ? t.battery : (d && d.last_battery != null ? d.last_battery : null);
+  if (batt != null) {
+    sBattPct.textContent = batt + '%';
+    sBattFill.style.width = Math.max(0, Math.min(100, batt)) + '%';
+    sBattFill.className = 'battery-fill ' + (batt > 50 ? 'batt-high' : batt >= 20 ? 'batt-mid' : 'batt-low');
+  } else {
+    sBattPct.textContent = '—';
+    sBattFill.style.width = '0%';
+  }
+
+  const lat = (t && t.latitude != null) ? t.latitude : (d && d.last_latitude != null ? d.last_latitude : null);
+  const lng = (t && t.longitude != null) ? t.longitude : (d && d.last_longitude != null ? d.last_longitude : null);
+  sCoords.textContent = (lat != null && lng != null) ? (Number(lat).toFixed(6) + ', ' + Number(lng).toFixed(6)) : '—';
+
+  sSpeed.textContent = (t && t.speed != null) ? (t.speed + ' m/s') : '—';
+  sNetwork.textContent = (t && t.network) ? t.network : '—';
+}
+function tickLastSeen() {
+  sLastSeen.textContent = fmtRel(state.lastSeenMs);
+}
+setInterval(tickLastSeen, 1000);
+
+// --- Banner ---
+function updateBanner() {
+  const now = Date.now();
+  const inWarning = state.warningUntil > now;
+  if (state.sosLatched) {
+    banner.className = 'sos';
+    const trigLabel = (state.lastSosTrigger === 'LOUD_SOUND') ? 'LOUD SOUND'
+                     : (state.lastSosTrigger === 'BUTTON') ? 'BUTTON PRESS'
+                     : (state.lastSosTrigger || 'UNKNOWN');
+    bannerText.textContent = '🚨 SOS TRIGGERED — ' + trigLabel;
+  } else if (inWarning) {
+    banner.className = 'warning';
+    bannerText.textContent = '⚠ WARNING — ' + (state.lastWarningType || 'UNKNOWN');
+  } else {
+    banner.className = '';
+    const id = (state.device && state.device.device_id) || (state.lastTelemetry && state.lastTelemetry.device_id) || '—';
+    bannerText.textContent = '● NORMAL — ' + id;
+  }
+}
+setInterval(updateBanner, 1000);  // keeps WARNING auto-expiring
+
+resetBtn.addEventListener('click', () => {
+  console.log('[dashboard] local SOS latch cleared by RESET button');
+  state.sosLatched = false;
+  state.lastSosTrigger = null;
+  updateBanner();
+});
+
+// --- Trail + map ---
+function pushTrail(lat, lng) {
+  state.trail.push([lat, lng]);
+  if (state.trail.length > TRAIL_MAX) state.trail.shift();
+  trailLine.setLatLngs(state.trail);
+}
+
+// --- Event feed ---
+function addEventRow(ev, prepend = true) {
+  const row = document.createElement('div');
+  const isSos = ev.type === 'SOS';
+  row.className = 'event-row ' + (isSos ? 'sos' : 'warning');
+
+  const t = document.createElement('span');
+  t.className = 'event-time';
+  t.textContent = fmtTime(ev.timestamp || ev.server_received_at);
+
+  const i = document.createElement('span');
+  i.className = 'event-icon';
+  i.textContent = isSos ? '🚨' : '⚠';
+
+  const txt = document.createElement('span');
+  txt.className = 'event-text';
+  if (isSos) {
+    const trig = ev.trigger || 'UNKNOWN';
+    const lat = ev.latitude, lng = ev.longitude;
+    const loc = (lat != null && lng != null) ? ('(' + Number(lat).toFixed(4) + ', ' + Number(lng).toFixed(4) + ')') : '(no gps)';
+    txt.textContent = 'SOS — ' + trig + ' @ ' + loc;
+  } else {
+    txt.textContent = 'WARNING — ' + (ev.warning_type || 'UNKNOWN');
+  }
+
+  row.appendChild(t);
+  row.appendChild(i);
+  row.appendChild(txt);
+
+  if (prepend) feedEl.insertBefore(row, feedEl.firstChild);
+  else feedEl.appendChild(row);
+
+  while (feedEl.children.length > FEED_MAX) feedEl.removeChild(feedEl.lastChild);
+}
+
+// --- Message handlers ---
+function handleSnapshot(data) {
+  console.log('[ws] snapshot', data);
+  state.device = data.device || null;
+  state.lastTelemetry = data.latest_telemetry || null;
+  state.sosLatched = !!data.sos_latched;
+
+  if (state.lastTelemetry) {
+    const lat = state.lastTelemetry.latitude, lng = state.lastTelemetry.longitude;
+    if (lat != null && lng != null) {
+      deviceMarker.setLatLng([lat, lng]);
+      map.setView([lat, lng], 15);
+      pushTrail(lat, lng);
+    }
+    state.lastSeenMs = parseServerMs(state.lastTelemetry.server_received_at) || parseServerMs(state.lastTelemetry.timestamp) || Date.now();
+  } else if (state.device && state.device.last_latitude != null) {
+    deviceMarker.setLatLng([state.device.last_latitude, state.device.last_longitude]);
+    map.setView([state.device.last_latitude, state.device.last_longitude], 15);
+  }
+
+  // recent events (oldest-first assumed; show newest at top of feed)
+  const recent = (data.recent_events || []).slice();
+  for (const ev of recent) {
+    addEventRow(ev, true);
+    if (ev.type === 'SOS' && ev.latitude != null && ev.longitude != null) {
+      const cm = L.circleMarker([ev.latitude, ev.longitude],
+        { radius: 10, color: '#ef4444', weight: 3, fillColor: '#ef4444', fillOpacity: 0.4 }).addTo(map);
+      state.sosMarkers.push(cm);
+    }
+  }
+
+  updateStatusCard();
+  tickLastSeen();
+  updateBanner();
+}
+
+function handleTelemetry(data) {
+  console.log('[ws] telemetry', data);
+  state.lastTelemetry = data;
+  state.lastSeenMs = parseServerMs(data.server_received_at) || parseServerMs(data.timestamp) || Date.now();
+
+  if (data.latitude != null && data.longitude != null) {
+    const ll = [data.latitude, data.longitude];
+    deviceMarker.setLatLng(ll);
+    map.panTo(ll);
+    pushTrail(data.latitude, data.longitude);
+  } else {
+    console.warn('[dashboard] telemetry missing lat/lng — skipping map update');
+  }
+
+  updateStatusCard();
+  tickLastSeen();
+  updateBanner();
+}
+
+function handleEvent(data) {
+  console.log('[ws] event', data);
+  addEventRow(data, true);
+
+  if (data.type === 'SOS') {
+    state.sosLatched = true;
+    state.lastSosTrigger = data.trigger || null;
+
+    if (data.latitude != null && data.longitude != null) {
+      const cm = L.circleMarker([data.latitude, data.longitude],
+        { radius: 12, color: '#ef4444', weight: 3, fillColor: '#ef4444', fillOpacity: 0.5 }).addTo(map);
+      state.sosMarkers.push(cm);
+    } else {
+      console.warn('[dashboard] SOS event missing lat/lng — pin skipped');
+    }
+
+    if (data.trigger === 'LOUD_SOUND') {
+      document.body.classList.remove('alert-flash');
+      void document.body.offsetWidth;
+      document.body.classList.add('alert-flash');
+      setTimeout(() => document.body.classList.remove('alert-flash'), 2200);
+    }
+  } else if (data.type === 'WARNING') {
+    state.lastWarningType = data.warning_type || 'UNKNOWN';
+    state.warningUntil = Date.now() + WARNING_DISPLAY_MS;
+  }
+
+  updateBanner();
+}
+
+// --- WebSocket ---
+let ws = null;
+let reconnectTimer = null;
+
+function wsUrl() {
+  const proto = (window.location.protocol === 'https:') ? 'wss:' : 'ws:';
+  const host = window.location.host || 'localhost:8000';
+  return proto + '//' + host + '/ws';
+}
+
+function setConn(status) {
+  if (status === 'connected') {
+    connInd.className = 'connected';
+    connText.textContent = 'connected';
+  } else {
+    connInd.className = 'reconnecting';
+    connText.textContent = 'reconnecting...';
+  }
+}
+
+function connect() {
+  const url = wsUrl();
+  console.log('[ws] connecting to', url);
+  setConn('reconnecting');
+  try {
+    ws = new WebSocket(url);
+  } catch (e) {
+    console.error('[ws] construction failed', e);
+    scheduleReconnect();
+    return;
+  }
+
+  ws.addEventListener('open', () => {
+    console.log('[ws] open');
+    setConn('connected');
+  });
+
+  ws.addEventListener('message', (ev) => {
+    let msg;
+    try { msg = JSON.parse(ev.data); }
+    catch (e) { console.error('[ws] bad JSON', ev.data); return; }
+
+    const kind = msg.kind;
+    const data = msg.data;
+    if (kind === 'snapshot') handleSnapshot(data);
+    else if (kind === 'telemetry') handleTelemetry(data);
+    else if (kind === 'event') handleEvent(data);
+    else console.warn('[ws] unknown kind', kind, msg);
+  });
+
+  ws.addEventListener('close', () => {
+    console.log('[ws] closed');
+    setConn('reconnecting');
+    scheduleReconnect();
+  });
+
+  ws.addEventListener('error', (e) => {
+    console.warn('[ws] error', e);
+  });
+}
+
+function scheduleReconnect() {
+  if (reconnectTimer) return;
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    connect();
+  }, 2000);
+}
+
+// --- Boot ---
+updateBanner();
+updateStatusCard();
+tickLastSeen();
+connect();
+
+setTimeout(() => map.invalidateSize(), 200);
+window.addEventListener('resize', () => map.invalidateSize());
+</script>
+
+<!-- ══════════════════════════════════════════════════════════════════════════ -->
+<!--  DISPLAY ADDITIONS — purely visual, no backend/WS logic touched          -->
+<!-- ══════════════════════════════════════════════════════════════════════════ -->
+<script>
+// Live clock in command bar
+(function () {
+  const el = document.getElementById('live-clock');
+  function tick() {
+    const now = new Date();
+    el.textContent = now.toLocaleTimeString('en-GB', { hour12: false });
+  }
+  tick();
+  setInterval(tick, 1000);
+})();
+
+// Map overlay sync — reads from state and existing DOM elements every 800ms
+(function () {
+  const moCoords = document.getElementById('mo-coords');
+  const moSpeed  = document.getElementById('mo-speed');
+  const moNet    = document.getElementById('mo-net');
+  const moDid    = document.getElementById('mo-did');
+  const moDot    = document.getElementById('mo-dot');
+
+  setInterval(function () {
+    if (moDid)    moDid.textContent    = document.getElementById('s-device').textContent;
+    if (moCoords) moCoords.textContent = document.getElementById('s-coords').textContent;
+    if (moSpeed)  moSpeed.textContent  = document.getElementById('s-speed').textContent;
+    if (moNet)    moNet.textContent    = document.getElementById('s-network').textContent;
+
+    // Dot mirrors SOS latch state
+    if (moDot) {
+      const sos = state.sosLatched;
+      moDot.style.background  = sos ? '#ef4444' : '#10b981';
+      moDot.style.boxShadow   = sos ? '0 0 10px rgba(239,68,68,0.7)' : '0 0 8px rgba(16,185,129,0.5)';
+      moDot.style.animationDuration = sos ? '0.6s' : '2.5s';
+    }
+  }, 800);
+})();
+
+// Event feed counter
+(function () {
+  const feedEl  = document.getElementById('event-feed');
+  const countEl = document.getElementById('feed-count');
+  if (!feedEl || !countEl) return;
+  const obs = new MutationObserver(function () {
+    const n = feedEl.children.length;
+    countEl.textContent = n + (n === 1 ? ' event' : ' events');
+  });
+  obs.observe(feedEl, { childList: true });
+})();
+</script>
+</body>
+</html>
